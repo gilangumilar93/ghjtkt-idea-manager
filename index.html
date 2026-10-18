@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GHJTKT Idea Manager</title>
+<style>
+  :root { --bg: #0f1117; --card: #1a1d27; --text: #e8eaf0; --muted: #8b90a0; --accent: #5b8def; --border: #2a2e3a; }
+  * { box-sizing: border-box; }
+  body { font-family: system-ui, -apple-system, sans-serif; background: var(--bg); color: var(--text); margin: 0; padding: 1.5rem; line-height: 1.5; }
+  h1 { margin: 0 0 0.25rem; font-size: 1.4rem; }
+  .sub { color: var(--muted); font-size: 0.85rem; margin-bottom: 1.5rem; }
+  .layout { display: grid; grid-template-columns: 320px 1fr; gap: 1.5rem; max-width: 1100px; }
+  @media (max-width: 800px) { .layout { grid-template-columns: 1fr; } }
+  .panel { background: var(--card); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+  label { display: block; font-size: 0.75rem; color: var(--muted); margin: 0.6rem 0 0.2rem; text-transform: uppercase; letter-spacing: 0.03em; }
+  input, textarea, select { width: 100%; background: #12141c; border: 1px solid var(--border); color: var(--text); padding: 0.5rem; border-radius: 4px; font: inherit; }
+  textarea { min-height: 60px; resize: vertical; }
+  button { background: var(--accent); color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; font: inherit; margin-top: 0.75rem; }
+  button.secondary { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  button.danger { background: #c44545; }
+  button:hover { opacity: 0.9; }
+  .idea { border: 1px solid var(--border); border-radius: 6px; padding: 0.75rem; margin-bottom: 0.75rem; background: #12141c; }
+  .idea-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 0.5rem; }
+  .idea h3 { margin: 0; font-size: 1rem; }
+  .meta { font-size: 0.75rem; color: var(--muted); }
+  .actions { display: flex; gap: 0.4rem; }
+  .actions button { margin: 0; padding: 0.25rem 0.5rem; font-size: 0.75rem; }
+  .empty { color: var(--muted); font-style: italic; }
+  .toolbar { display: flex; gap: 0.5rem; margin-bottom: 1rem; flex-wrap: wrap; }
+  .status { display: inline-block; font-size: 0.7rem; padding: 0.1rem 0.4rem; border-radius: 99px; background: #2a2e3a; }
+  .status.open { background: #1e3a5f; }
+  .status.research { background: #3a2e1e; }
+  .status.experiment { background: #1e3a2e; }
+  .status.done { background: #2e3a1e; }
+</style>
+</head>
+<body>
+  <h1>GHJTKT Idea Manager</h1>
+  <p class="sub">Local-only · data stays in this browser · matches Inbox fields</p>
+
+  <div class="layout">
+    <div class="panel">
+      <h2 style="margin:0 0 0.5rem; font-size:1rem;">Add / Edit Idea</h2>
+      <form id="form">
+        <input type="hidden" id="editId">
+        <label>Idea / Question</label>
+        <input type="text" id="idea" required placeholder="What is the idea?">
+        <label>Why interesting</label>
+        <textarea id="why" placeholder="Why does this matter?"></textarea>
+        <label>Unknowns</label>
+        <textarea id="unknowns" placeholder="What do I not know yet?"></textarea>
+        <label>Next step</label>
+        <input type="text" id="next" placeholder="research / experiment / build / archive">
+        <label>Status</label>
+        <select id="status">
+          <option value="open">Open</option>
+          <option value="research">Research</option>
+          <option value="experiment">Experiment</option>
+          <option value="build">Build</option>
+          <option value="done">Done / Archived</option>
+        </select>
+        <div style="display:flex; gap:0.5rem;">
+          <button type="submit" id="submitBtn">Add Idea</button>
+          <button type="button" class="secondary" id="cancelBtn" style="display:none;">Cancel</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="panel">
+      <div class="toolbar">
+        <input type="search" id="search" placeholder="Filter ideas…" style="flex:1; min-width:180px;">
+        <button class="secondary" id="exportBtn">Export JSON</button>
+        <button class="secondary" id="exportMdBtn">Export Markdown</button>
+        <button class="secondary" id="importBtn">Import JSON</button>
+        <input type="file" id="importFile" accept=".json" style="display:none;">
+      </div>
+      <div id="list"></div>
+    </div>
+  </div>
+
+<script>
+const STORAGE_KEY = 'ghjtkt-ideas-v1';
+
+function load() {
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; }
+  catch { return []; }
+}
+function save(ideas) {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(ideas));
+}
+
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+function render() {
+  const ideas = load();
+  const q = document.getElementById('search').value.toLowerCase();
+  const filtered = ideas.filter(i => 
+    i.idea.toLowerCase().includes(q) || 
+    (i.why||'').toLowerCase().includes(q) ||
+    (i.next||'').toLowerCase().includes(q)
+  ).sort((a,b) => b.created - a.created);
+
+  const list = document.getElementById('list');
+  if (!filtered.length) {
+    list.innerHTML = '<p class="empty">No ideas yet. Add one on the left.</p>';
+    return;
+  }
+
+  list.innerHTML = filtered.map(i => `
+    <div class="idea" data-id="${i.id}">
+      <div class="idea-header">
+        <div>
+          <h3>${escapeHtml(i.idea)}</h3>
+          <div class="meta">${new Date(i.created).toLocaleDateString()} · <span class="status ${i.status}">${i.status}</span></div>
+        </div>
+        <div class="actions">
+          <button class="secondary" onclick="editIdea('${i.id}')">Edit</button>
+          <button class="danger" onclick="deleteIdea('${i.id}')">Delete</button>
+        </div>
+      </div>
+      ${i.why ? `<p><strong>Why:</strong> ${escapeHtml(i.why)}</p>` : ''}
+      ${i.unknowns ? `<p><strong>Unknowns:</strong> ${escapeHtml(i.unknowns)}</p>` : ''}
+      ${i.next ? `<p><strong>Next:</strong> ${escapeHtml(i.next)}</p>` : ''}
+    </div>
+  `).join('');
+}
+
+function escapeHtml(s) {
+  return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+document.getElementById('form').addEventListener('submit', e => {
+  e.preventDefault();
+  const ideas = load();
+  const editId = document.getElementById('editId').value;
+  const data = {
+    idea: document.getElementById('idea').value.trim(),
+    why: document.getElementById('why').value.trim(),
+    unknowns: document.getElementById('unknowns').value.trim(),
+    next: document.getElementById('next').value.trim(),
+    status: document.getElementById('status').value,
+  };
+  if (!data.idea) return;
+
+  if (editId) {
+    const idx = ideas.findIndex(i => i.id === editId);
+    if (idx >= 0) ideas[idx] = { ...ideas[idx], ...data, updated: Date.now() };
+  } else {
+    ideas.push({ id: uid(), created: Date.now(), ...data });
+  }
+  save(ideas);
+  resetForm();
+  render();
+});
+
+function editIdea(id) {
+  const idea = load().find(i => i.id === id);
+  if (!idea) return;
+  document.getElementById('editId').value = id;
+  document.getElementById('idea').value = idea.idea;
+  document.getElementById('why').value = idea.why || '';
+  document.getElementById('unknowns').value = idea.unknowns || '';
+  document.getElementById('next').value = idea.next || '';
+  document.getElementById('status').value = idea.status || 'open';
+  document.getElementById('submitBtn').textContent = 'Update Idea';
+  document.getElementById('cancelBtn').style.display = 'inline-block';
+  document.getElementById('idea').focus();
+}
+
+function deleteIdea(id) {
+  if (!confirm('Delete this idea?')) return;
+  save(load().filter(i => i.id !== id));
+  render();
+}
+
+function resetForm() {
+  document.getElementById('form').reset();
+  document.getElementById('editId').value = '';
+  document.getElementById('submitBtn').textContent = 'Add Idea';
+  document.getElementById('cancelBtn').style.display = 'none';
+}
+
+document.getElementById('cancelBtn').addEventListener('click', resetForm);
+document.getElementById('search').addEventListener('input', render);
+
+document.getElementById('exportBtn').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify(load(), null, 2)], {type: 'application/json'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ghjtkt-ideas-${new Date().toISOString().slice(0,10)}.json`;
+  a.click();
+});
+
+document.getElementById('exportMdBtn').addEventListener('click', () => {
+  const ideas = load().sort((a,b) => b.created - a.created);
+  let md = `# GHJTKT Ideas Export\n\nExported: ${new Date().toISOString().slice(0,10)}\n\n`;
+  md += `| Date | Idea / Question | Why interesting | Unknowns | Next step | Status |\n`;
+  md += `|------|-----------------|-----------------|----------|-----------|--------|\n`;
+  ideas.forEach(i => {
+    const date = new Date(i.created).toLocaleDateString();
+    const idea = (i.idea || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    const why = (i.why || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    const unknowns = (i.unknowns || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    const next = (i.next || '').replace(/\|/g, '\\|').replace(/\n/g, ' ');
+    const status = i.status || 'open';
+    md += `| ${date} | ${idea} | ${why} | ${unknowns} | ${next} | ${status} |\n`;
+  });
+  if (!ideas.length) md += `| - | No ideas yet | - | - | - | - |\n`;
+  md += `\n---\n_Generated by GHJTKT Idea Manager_`;
+
+  const blob = new Blob([md], {type: 'text/markdown'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `ghjtkt-ideas-${new Date().toISOString().slice(0,10)}.md`;
+  a.click();
+});
+
+document.getElementById('importBtn').addEventListener('click', () => document.getElementById('importFile').click());
+document.getElementById('importFile').addEventListener('change', e => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const imported = JSON.parse(reader.result);
+      if (!Array.isArray(imported)) throw new Error('Not an array');
+      const existing = load();
+      const merged = [...existing];
+      imported.forEach(i => {
+        if (!merged.find(x => x.id === i.id)) merged.push(i);
+      });
+      save(merged);
+      render();
+      alert(`Imported. Total ideas: ${merged.length}`);
+    } catch (err) {
+      alert('Invalid JSON file');
+    }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+render();
+</script>
+</body>
+</html>
